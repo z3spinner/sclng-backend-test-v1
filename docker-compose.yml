@@ -1,10 +1,42 @@
 version: '3'
 services:
-  web:
-    build: .
+  apiserver:
+    build: ./apiServer
     volumes:
       - ./:/go/src/github.com/Scalingo/sclng-backend-test-v1
     ports:
       - "5000:5000"
-    command: reflex -r '\.go$$' -s -- sh -c 'go build -buildvcs=false && ./sclng-backend-test-v1'
+    command: bash -c "
+        mkdir -p ./bin
+        && reflex -r '\.go$$' -s -- sh -c 'go build -o ../bin -C ./apiServer -buildvcs=false && ./bin/apiServer'
+      "
     stop_signal: SIGKILL
+
+  worker:
+    build: ./worker
+    volumes:
+      - ./:/go/src/github.com/Scalingo/sclng-backend-test-v1
+    environment:
+      - USE_FETCHER=${USE_FETCHER:-mock}
+      - MOCK_FETCHER_AVG_REQUEST_SECONDS=${MOCK_FETCHER_AVG_REQUEST_SECONDS:-2.5}
+      - MOCK_RATE_LIMIT=${MOCK_RATE_LIMIT:-20}
+      - MOCK_RATE_LIMIT_WINDOW_SECONDS=${MOCK_RATE_LIMIT_WINDOW_SECONDS:-60}
+      - FETCH_TIMEOUT_SECONDS=${FETCH_TIMEOUT_SECONDS:-4}
+      - SLEEPOVER_DURATION_SECONDS=${SLEEPOVER_DURATION_SECONDS:-4}
+    command: bash -c "
+      mkdir -p ./bin
+      && reflex -r '\.go$$' -s -- sh -c 'go build -o ../bin -C ./worker -buildvcs=false && ./bin/worker'
+      "
+    stop_signal: SIGKILL
+
+  redis:
+    image: redis/redis-stack-server:latest
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - cache:/data
+
+volumes:
+  cache:
+    driver: local
