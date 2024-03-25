@@ -26,26 +26,47 @@ func (ws Webservice) reposHandler() http.Handler {
 				return
 			}
 
-			// Get the repository list from the usecases
-			list, err := ws.uc.GetRepoListFiltered(
-				r.Context(), usecases.NewGetRepoListFilteredFilters(
-					r.URL.Query().Get("name"), r.URL.Query().Get("language"), r.URL.Query().Get("license"),
-					r.URL.Query().Get("allow_forking"), r.URL.Query().Get("has_open_issues"),
-				),
+			// Get the filters from the query parameters
+			filters := usecases.NewGetRepoListFilteredFilters(
+				r.URL.Query().Get("name"),
+				r.URL.Query().Get("language"),
+				r.URL.Query().Get("license"),
+				r.URL.Query().Get("allow_forking"),
+				r.URL.Query().Get("has_open_issues"),
 			)
-			if err != nil {
-				logger.Get(r.Context()).WithError(err).Error("Fail to get latest 100 repositories")
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
 
-			// Convert the list from the types used in the entities layer to those in the interfaces layer
-			iList := convertRepoListE2I(list)
+			// Check the cache is valid
+			ws.checkCacheValidity()
+
+			// Check the local-memory cache first
+			cacheKey := filters.CacheKey()
+			iList, ok := ws.reposCache[cacheKey]
+
+			// Cache miss
+			if !ok {
+				// Get the repository list from the usecases
+				list, err := ws.uc.GetRepoListFiltered(
+					r.Context(), filters,
+				)
+				if err != nil {
+					logger.Get(r.Context()).WithError(err).Error("Fail to get latest 100 repositories")
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+
+				// Convert the list from the types used in the entities layer to those in the interfaces layer
+				iList = convertRepoListE2I(list)
+
+				// Store the data in the local-memory cache
+				ws.reposMU.Lock()
+				ws.reposCache[cacheKey] = iList
+				ws.reposMU.Unlock()
+			}
 
 			w.Header().Add("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 
-			err = json.NewEncoder(w).Encode(
+			err := json.NewEncoder(w).Encode(
 				RepoList{
 					Items: iList,
 				},

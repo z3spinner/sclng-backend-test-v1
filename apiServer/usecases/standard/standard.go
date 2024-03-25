@@ -16,9 +16,6 @@ type Standard struct {
 	log logrus.FieldLogger
 	cfg *config.Config
 	db  db.Service
-
-	// NOTE: We could include a local memory cache here to reduce the traffic and load on the database.
-
 }
 
 func (s Standard) GetRepoListFiltered(ctx context.Context, filters usecases.GetRepoListFilters) (

@@ -6,9 +6,10 @@ import (
 )
 
 type Config struct {
-	APIServerPort int    `envconfig:"PORT" default:"5000"`
-	RedisHostPort string `envconfig:"REDIS_HOSTPORT" default:"redis:6379"`
-	RedisPrefix   string `envconfig:"REDIS_PREFIX" default:""`
+	APIServerPort                int    `envconfig:"PORT" default:"5000"`
+	RedisHostPort                string `envconfig:"REDIS_HOSTPORT" default:"redis:6379"`
+	RedisPrefix                  string `envconfig:"REDIS_PREFIX" default:""`
+	RequestMemCacheMaxAgeSeconds int    `envconfig:"REQUEST_MEMCACHE_MAX_AGE_SECONDS" default:"10"`
 }
 
 func New() (*Config, error) {

@@ -18,11 +18,12 @@ services:
       - ./:/go/src/github.com/Scalingo/sclng-backend-test-v1
     environment:
       - USE_FETCHER=${USE_FETCHER:-mock}
-      - MOCK_FETCHER_AVG_REQUEST_SECONDS=${MOCK_FETCHER_AVG_REQUEST_SECONDS:-2.5}
+      - MOCK_FETCHER_AVG_REQUEST_SECONDS=${MOCK_FETCHER_AVG_REQUEST_SECONDS:-0.5}
       - MOCK_RATE_LIMIT=${MOCK_RATE_LIMIT:-20}
       - MOCK_RATE_LIMIT_WINDOW_SECONDS=${MOCK_RATE_LIMIT_WINDOW_SECONDS:-60}
-      - FETCH_TIMEOUT_SECONDS=${FETCH_TIMEOUT_SECONDS:-4}
+      - FETCH_TIMEOUT_SECONDS=${FETCH_TIMEOUT_SECONDS:-0.98}
       - SLEEPOVER_DURATION_SECONDS=${SLEEPOVER_DURATION_SECONDS:-4}
+      - REQUEST_MEMCACHE_MAX_AGE_SECONDS=${REQUEST_MEMCACHE_MAX_AGE_SECONDS:-10}
     command: bash -c "
       mkdir -p ./bin
       && reflex -r '\.go$$' -s -- sh -c 'go build -o ../bin -C ./worker -buildvcs=false && ./bin/worker'

@@ -19,22 +19,34 @@ const gracefulShutdownTimeout = 5 * time.Second
 
 type Webservice struct {
 	log        logrus.FieldLogger
+	cfg        *config.Config
 	serverPort int
 	uc         usecases.Usecases
+
+	// We Include a local memory cache here to reduce the traffic and load on the database.
+	// Response times drop significantly when the data is cached.
+	//  - No cache: ~ < 10ms (approx)
+	//  - With cache:  < 300µs (approx)
+	statsCache *Stats
+	reposMU    *sync.Mutex
+	reposCache map[string][]RepoItem
+
+	// We have a naive cache invalidation strategy here. If the timestamp is older than a certain age, we invalidate the cache.
+	cacheTimeStamp time.Time
 }
 
 // New creates a new webservice
-func New(log logrus.FieldLogger, config *config.Config, uc usecases.Usecases) (*Webservice, error) {
+func New(log logrus.FieldLogger, cfg *config.Config, uc usecases.Usecases) (*Webservice, error) {
 
 	if log == nil {
 		return nil, fmt.Errorf("logger is required")
 	}
 
-	if config == nil {
+	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
 
-	if config.APIServerPort == 0 {
+	if cfg.APIServerPort == 0 {
 		return nil, fmt.Errorf("port is required")
 	}
 
@@ -42,11 +54,14 @@ func New(log logrus.FieldLogger, config *config.Config, uc usecases.Usecases) (*
 		log: log.WithFields(
 			logrus.Fields{
 				"service": serviceName,
-				"port":    config.APIServerPort,
+				"port":    cfg.APIServerPort,
 			},
 		),
-		serverPort: config.APIServerPort,
+		cfg:        cfg,
+		serverPort: cfg.APIServerPort,
 		uc:         uc,
+		reposMU:    &sync.Mutex{},
+		reposCache: make(map[string][]RepoItem),
 	}, nil
 }
 
@@ -125,4 +140,16 @@ func (ws Webservice) Start(ctx context.Context, stop context.CancelFunc, wg *syn
 	}()
 
 	return routineErr
+}
+
+func (ws *Webservice) checkCacheValidity() {
+
+	// The cache is old. Invalidate it. (This covers the case where the cacheTimeStamp isZero also)
+	if time.Since(ws.cacheTimeStamp).Seconds() > float64(ws.cfg.RequestMemCacheMaxAgeSeconds) {
+		ws.reposMU.Lock()
+		ws.reposCache = make(map[string][]RepoItem)
+		ws.statsCache = nil
+		ws.reposMU.Unlock()
+		ws.cacheTimeStamp = time.Now()
+	}
 }

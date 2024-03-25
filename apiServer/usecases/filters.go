@@ -1,6 +1,9 @@
 package usecases
 
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+)
 
 // GetRepoListFilters is a struct to hold the parameters for the GetRepoList usecase
 // use pointer values to allow null values
@@ -10,6 +13,11 @@ type GetRepoListFilters struct {
 	License       *string
 	AllowForking  *bool
 	HasOpenIssues *bool
+}
+
+// CacheKey returns a string that can be used as a cache key for the filters
+func (g GetRepoListFilters) CacheKey() string {
+	return fmt.Sprintf("%v-%v-%v-%v-%v", g.Name, g.Language, g.License, g.AllowForking, g.HasOpenIssues)
 }
 
 // NewGetRepoListFilteredFilters creates a new GetRepoListFilters struct with the provided values

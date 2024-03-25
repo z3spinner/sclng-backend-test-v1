@@ -1,26 +1,6 @@
-# Canvas for Backend Technical Test at Scalingo
+# Backend Technical Test at Scalingo - Submission by Zeno Kerr
 
-## Instructions
-
-* From this canvas, respond to the project which has been communicated to you by our team
-* Feel free to change everything
-
-## Execution
-
-```
-docker compose up
-```
-
-Application will be then running on port `5000`
-
-## Test
-
-```
-$ curl localhost:5000/ping
-{ "status": "pong" }
-```
-
-# Tasks [translated from the technical test pdf]
+## Task Summary [translated from the technical test pdf]
 
 1. Return data about the last 100 public GitHub repositories. Allows you to limit the results based on different
    parameters (language, license, etc.)
@@ -30,12 +10,6 @@ $ curl localhost:5000/ping
 4. Process the results in parallel to retrieve information concerning the programming languages they use.
 5. Filter data based on user search
 6. Aggregate data and view statistics from Git repositories with the language selected.
-
-**QUESTIONS**
-
-* Authenticated / Unauthenticated requests?
-  * May I assume that we are making unauthenticated requests to the Github API, which limited to 60 requests per hour?
-* May I assume that filtering is carried after the response from Github? The final response would have <=100 results.
 
 _Example response:_
 
@@ -58,12 +32,114 @@ _Example response:_
 }
 ```
 
-# Submission
+# Running the application
 
-#### Diagrams in Markdown using Mermaid
+The application is containerised and can be run using docker-compose. It is configured using environment variables
+
+## Start the system
+
+Using docker-compose:
+
+```bash 
+docker compose up
+```
+
+Run using docker compose with mocks and defaults:
+
+```bash
+USE_FETCHER=mock \
+MOCK_FETCHER_AVG_REQUEST_SECONDS=2.5 \
+MOCK_RATE_LIMIT=20 \
+MOCK_RATE_LIMIT_WINDOW_SECONDS=60 \
+FETCH_TIMEOUT_SECONDS=4 \
+SLEEPOVER_DURATION_SECONDS=4 \
+docker compose up
+```
+
+## Environment Variables
+
+### API Server
+
+| Variable                         | Default    | Description                                    |
+|----------------------------------|------------|------------------------------------------------|
+| PORT                             | 5000       | The port the API server listens on             |
+| REDIS_HOSTPORT                   | redis:6379 | The HostPort of the redis database             |
+| REDIS_PREFIX                     |            | The prefix for the redis database              |
+| REQUEST_MEMCACHE_MAX_AGE_SECONDS | 10         | The TTL for the internal requests memory cache |
+
+### Worker
+
+| Variable                         | Default    | Description                                                                                                                                                                                                           |
+|----------------------------------|------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| REDIS_HOSTPORT                   | redis:6379 | The HostPort of the redis database                                                                                                                                                                                    |
+| REDIS_PREFIX                     |            | The prefix for the redis database                                                                                                                                                                                     |
+| USE_FETCHER                      | mock       | Use the mock fetcher for testing <br/>    * **mock** - Use the mock fetcher (uses static data from the `./worker/interfaces/fetcher/mock/data` directory <br/>* **live** - Use the live fetcher (uses the Github API) |
+| MOCK_RATE_LIMIT                  | 20         | The mock fetcher simulates an API rate limiter. This is the number of requests allowed per `MOCK_RATE_LIMIT_WINDOW_SECONDS`                                                                                           |
+| MOCK_RATE_LIMIT_WINDOW_SECONDS   | 60         | The window for the rate limit (Max `MOCK_RATE_LIMIT` requests per window)                                                                                                                                             |
+| MOCK_FETCHER_AVG_REQUEST_SECONDS | 0.5        | The average time for an API request to return in the mock fetcher (max time=avg x2)                                                                                                                                   |
+| FETCH_TIMEOUT_SECONDS            | 0.98       | The timeout for fetching data from the fetcher                                                                                                                                                                        |
+| SLEEPOVER_DURATION_SECONDS       | 5          | When the API rate limit is exceeded, the workers will sleep until the reset time plus this duration                                                                                                                   |
+
+## Calling the API
+
+```bash
+curl 'localhost:5000/ping'
+```
+
+```bash
+curl 'localhost:5000/repos'
+```
+
+```bash
+curl 'localhost:5000/repos?language=python&license=apache&has_open_issues=true'
+````
+
+```bash
+curl 'localhost:5000/stats'
+```
+
+```bash
+# REPOS
+# Call every second (useful for seeing the effect of the in-memory cache)
+while true ; do curl -s 'localhost:5000/repos' > /dev/null ; sleep 1 ; done
+```
+
+```bash
+# STATS
+# Call every second (useful for seeing the effect of the in-memory cache)
+while true ; do curl -s 'localhost:5000/stats' > /dev/null ; sleep 1 ; done
+```
+
+# Tests
+
+I have written some tests for this code base, but they are not exhaustive. I have:
+
+* written tests mock and live implementations of the fetcher.
+* written tests memory and redis implementations of the database.
+
+These tests helped with development of the parallel processing logic in the worker without hitting the Github API.
+The memory implmenetation of the database could be useful for testing the API server without needing a redis instance,
+however, due to time constraints the `memory` implementation of the db interface is not complete.
+
+```bash
+  # Run all tests (including Github API tests)
+  #  This will use some of your rate limit
+  go test ./...
+```
+
+**Skip**: use `-short` to skip the **Github API** tests
+
+```bash
+  # Run all tests (short skips Github API tests)
+  go test -short ./...
+```
+
+# Further documentation
+
+#### Diagrams in this README.md are made with Mermaid JS
 
 * The documentation below includes diagrams created using Mermaid (https://mermaid.js.org/).
-* Github markdown supports mermaid.
+* Github supports mermaid when rendering markdown.
 
 To view the diagrams in your IDE, please install one of the following plugins:
 
@@ -145,7 +221,31 @@ When deciding on the system design we will consider the following objectives:
   * Language choice (go)
   * Code efficiency
 
-### High Level Design
+## High Level Design
+
+A good approach to this problem is to treat the system as a set of services. Each service has a specific responsibility
+and can be scaled independently* can be monitored independently.
+
+In this application there are two main services and some supporting services:
+
+### 1. Worker Service
+
+The worker is an essential component of the system. It is responsible for periodically fetching the latest data from the
+Github API, processing the data, and storing it in the database. It also processes the language data in parallel. It
+gracefully manages the rate limits of the Github API.
+
+* Periodically query the Github API to get the latest data
+* Process the data
+* Store the data
+
+### 2. API Server Service
+
+The API server is responsible for processing the requests from the client. It retrieves the data from the database and
+returns it to the client. It also processes the requests for the aggregated statistics.
+
+* Respond to API requests
+
+### 3. Supporting Services:
 
 * Load balancer [Not implemented]
   * Distribute requests to the service
@@ -153,14 +253,6 @@ When deciding on the system design we will consider the following objectives:
   * rate limiter can be horizontally scalable.
   * internal to the load balancer for low latency and highly scalable as part of cloud provider services.
   * periodically caches data to a shared cache
-* API Servers
-  * Process requests
-  * Store responses in network cache
-  * Store responses in local mem-cache
-* Worker
-  * Responsible for periodically querying Github to get the latest data
-  * Processes the data
-  * Stores the data in redis
 * Database Service
   * Store the results of the Github API calls
   * Provide aggregation logic
@@ -172,10 +264,13 @@ When deciding on the system design we will consider the following objectives:
     * Relational DB: Postgres, MySQL
       * pros: distributed and scalable, can handle large amounts of data
       * cons: external dependency, slower than Redis
-* Caching API Requests/Responses [Not implemented]
-  * Option 1: Local in memory cache in each API Server instance
+* Caching API Requests/Responses
+  * Option 1: **Local in-memory cache** in each API Server instance (basic implementation as an example for
+    this exercise)
   * Option 2: Cache service in local network (such as varnish)
   * Option 3: CDN Content Delivery Network (external cache)
+
+## System Architecture
 
 ```mermaid
 graph TD
@@ -229,20 +324,9 @@ which could cause contention and bugs. By separating the worker from the API ser
 * Write once, read many times
 * Single responsibility
 
-## Low Level Design
+## A few more design details
 
-There are two main applications: the API Server and the Worker.
-They each need to be built and deployed independently, however they share some common code.
-
-### Directory Structure
-
-**/apiServer** Contains the code for the API Server
-
-**/worker**  Contains the code for the Worker
-
-**/common** Contains the common code shared between the API Server and the Worker
-
-### Architecture
+### Software Architecture
 
 The API Server and the Worker follow _**a simplified version**_ of the clean architecture pattern.
 https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html
@@ -264,9 +348,36 @@ Within our applications, we combine 3 of the layers into a single layer for simp
 * Use Cases (`/usecases`)
 * Entities (`/entities`)
 
-Both the `worker` and the `apiServer` applications have the same directory structure. The `common` components also
-follow the
-same convention.
+### A brief explanation of the layers:
+
+Entities
+: This layer contains internal data structures and "high level policies" used by the application.
+
+Usecases
+: This layer implements the application-specific logic. In the case of the worker, we coordinate the fetching of data
+from the Github API, the processing and the storage of the data. In the case of the API server, we coordinate the
+processing of
+requests and responses.
+
+Interfaces
+: This layer contains the external interfaces, the frameworks and drivers, and the interface adapters. The external
+interfaces are the interfaces to the external services (Github API, Redis). The frameworks and drivers are the
+implementations of the external interfaces. The interface adapters are the implementations of the interfaces to the
+usecases.
+
+### Overall project structure
+
+There are two main applications: the API Server and the Worker.
+They each need to be built and deployed independently, however they share some common code.
+
+#### Directory Structure
+
+- **/apiServer** Contains the code for the API Server
+- **/worker**  Contains the code for the Worker
+- **/common** Contains the common code shared between the API Server and the Worker
+
+Both the `worker` and the `apiServer` applications have the same directory structure. The `common` code
+follows a similar convention.
 
 ### Worker
 
@@ -328,6 +439,8 @@ sequenceDiagram
 
 ### API Server
 
+The API server is responsible for processing the requests from the client and allows some filtering.
+
 #### Filters
 
 Endpoint /repos can be filtered with the following query parameters:
@@ -343,10 +456,7 @@ Endpoint /repos can be filtered with the following query parameters:
     * has_pages [not implemented]
     * has_discussions [not implemented]
 
-**Please note** The filtering function is quite naive and could be improved. However, I think it is sufficient for this
-exercise.
-
-An example query
+#### An example filtered query
 
 ```bash
 curl 'localhost:5000/repos?language=go&license=apache&has_open_issues=false'
@@ -359,95 +469,6 @@ The data is aggregated by:
 
 * language
 * license
-
-## Running the application
-
-The application is configured using environment variables
-
-### Environment Variables
-
-#### API Server
-
-| Variable       | Default    | Description                        |
-|----------------|------------|------------------------------------|
-| PORT           | 5000       | The port the API server listens on |
-| REDIS_HOSTPORT | redis:6379 | The HostPort of the redis database |
-| REDIS_PREFIX   |            | The prefix for the redis database  |
-
-#### Worker
-
-| Variable                         | Default    | Description                                                                                                                                                                                                           |
-|----------------------------------|------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| REDIS_HOSTPORT                   | redis:6379 | The HostPort of the redis database                                                                                                                                                                                    |
-| REDIS_PREFIX                     |            | The prefix for the redis database                                                                                                                                                                                     |
-| USE_FETCHER                      | mock       | Use the mock fetcher for testing <br/>    * **mock** - Use the mock fetcher (uses static data from the `./worker/interfaces/fetcher/mock/data` directory <br/>* **live** - Use the live fetcher (uses the Github API) |
-| MOCK_RATE_LIMIT                  | 20         | The mock fetcher simulates an API rate limiter. This is the number of requests allowed per `MOCK_RATE_LIMIT_WINDOW_SECONDS`                                                                                           |
-| MOCK_RATE_LIMIT_WINDOW_SECONDS   | 60         | The window for the rate limit (Max `MOCK_RATE_LIMIT` requests per window)                                                                                                                                             |
-| MOCK_FETCHER_AVG_REQUEST_SECONDS | 2.5        | The average time for an API request to return in the mock fetcher                                                                                                                                                     |
-| FETCH_TIMEOUT_SECONDS            | 3          | The timeout for fetching data from the fetcher                                                                                                                                                                        |
-| SLEEPOVER_DURATION_SECONDS       | 5          | When the API rate limit is exceeded, the workers will sleep until the reset time plus this duration                                                                                                                   |
-
-### Start the system
-
-Using docker-compose:
-
-```bash 
-docker compose up
-```
-
-Run using docker compose with mocks and defaults:
-
-```bash
-USE_FETCHER=mock \
-MOCK_FETCHER_AVG_REQUEST_SECONDS=2.5 \
-MOCK_RATE_LIMIT=20 \
-MOCK_RATE_LIMIT_WINDOW_SECONDS=60 \
-FETCH_TIMEOUT_SECONDS=4 \
-SLEEPOVER_DURATION_SECONDS=4 \
-docker compose up
-```
-
-### Call the API
-
-```bash
-curl 'localhost:5000/ping'
-```
-
-```bash
-curl  -o /tmp/repos.json 'localhost:5000/repos'
-```
-
-```bash
-curl -o /tmp/repos-filtered.json 'localhost:5000/repos?language=python&license=apache&has_open_issues=true'
-````
-
-```bash
-curl  -o /tmp/stats.json 'localhost:5000/stats'
-```
-
-## Tests
-
-I have written some tests for this code base, but they are not exhaustive. I have:
-
-* written tests mock and live implementations of the fetcher.
-* written tests memory and redis implementations of the database.
-
-These tests helped with development of the parallel processing logic in the worker without hitting the Github API.
-The memory implmenetation of the database could be useful for testing the API server without needing a redis instance,
-however, due to time constraints the `memory` implementation of the db interface is not complete.
-
-```bash
-  # Run all tests (including Github API tests)
-  #  This will use some of your rate limit
-  go test ./...
-```
-
-**Skip**: use `-short` to skip the **Github API** tests
-
-```bash
-  # Run all tests (short skips Github API tests)
-  go test -short ./...
-```
 
 ### Github API Curl commands
 
@@ -485,4 +506,26 @@ for i in `grep languages_url $dir/list.json | awk '{print $2}' | sed 's/[",]//g'
   curl -H 'Accept: application/vnd.github.json' \
     $i -s -o $file ; \
 done
+```
+
+# [Original README.md] Canvas for Backend Technical Test at Scalingo
+
+## Instructions
+
+* From this canvas, respond to the project which has been communicated to you by our team
+* Feel free to change everything
+
+## Execution
+
+```
+docker compose up
+```
+
+Application will be then running on port `5000`
+
+## Test
+
+```
+$ curl localhost:5000/ping
+{ "status": "pong" }
 ```
