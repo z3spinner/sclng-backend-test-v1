@@ -389,7 +389,6 @@ The following sequence diagram shows the process of the worker.
 4. Create a queue of language requests
 5. Process the language requests in parallel
 6. Store the language data in the database
-7. Update the aggregated data
 8. Repeat
 
 ```mermaid
@@ -400,36 +399,30 @@ sequenceDiagram
 
     loop repeat when langRequest queue is empty
         note over W: Get Latest 100
-    %%    W->>DB: Get: X-RateLimit-Remaining
-    %%    DB-->>W: response
 
         opt Rate Limited
             W --> W: Sleep
         end
         W ->> G: Request Latest 100
         G -->> W: response
-    %%    W-->>DB: update X-RateLimit-*
         W ->> W: Process Data
         W ->> DB: Store Response
-        W ->> DB: Store Aggregated Data
-        W ->> DB: Create Queue of Language Requests
+        W ->> W: Create Queue of Language Requests
         note over W: Parallel
         par Process the language requests in parallel
-        %%    W->>DB: Get: Rate-Limit-Remaining
-        %%    DB-->>W: response
+            opt if langReq Queue is empty
+                note over W: Break
+            end
+
+            W ->> W: Get LangReq from Queue
             opt Rate Limited
                 W --> W: Sleep
             end
-            W ->> DB: Get LangReq from Queue
-            DB -->> W: response
-            opt if langReq is empty
-                note over W: Break
-            end
             W ->> G: Request Languages
             G -->> W: response
+            
             W ->> W: Process Lang Data
             W ->> DB: Store Lang Data
-            W ->> DB: Update Aggregated Data
         end
 
         note over W: Back to top of loop
@@ -467,8 +460,10 @@ curl 'localhost:5000/repos?language=go&license=apache&has_open_issues=false'
 The `/stats` endpoint returns the aggregated statistics for the repositories.
 The data is aggregated by:
 
-* language
-* license
+* language to average number of forks per repository
+* language to average number of open issues per repository
+* language to average size of the repository
+* language to number of repositories
 
 ### Github API Curl commands
 
